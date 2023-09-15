@@ -65,8 +65,14 @@ sema_down (struct semaphore *sema) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
+
+	/*Wait for sema value become positive*/
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+		/* 
+			Insert thread to priority ordered sleep queue. 
+			Put the thread to sleep. (thread_unblock())
+		*/		
+		list_insert_ordered (&sema->waiters, &thread_current ()->elem, cmp_priority, NULL);
 		thread_block ();
 	}
 	sema->value--;
@@ -109,10 +115,19 @@ sema_up (struct semaphore *sema) {
 	ASSERT (sema != NULL);
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
+	struct thread *th = NULL;
+	
+	/* Wake up on thread from sleeping queue */
+	if (!list_empty (&sema->waiters)){
+		th = list_entry (list_pop_front (&sema->waiters),
+					struct thread, elem);
+		thread_unblock (th);
+	}
 	sema->value++;
+	
+	/* Yield the CPU if the newly arriving thread has higher priority*/
+	if (th && th->priority > thread_current()->priority)
+		thread_yield();
 	intr_set_level (old_level);
 }
 
@@ -252,6 +267,20 @@ cond_init (struct condition *cond) {
 	list_init (&cond->waiters);
 }
 
+bool cmp_priority_cond(const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED){
+	struct semaphore *s_A = &list_entry(a, struct semaphore_elem, elem)->semaphore;
+	struct semaphore *s_B = &list_entry(b, struct semaphore_elem, elem)->semaphore;	
+
+	struct thread *thread_A = list_entry(list_max(&s_A->waiters, cmp_priority, NULL), struct thread, elem);
+	
+	struct thread *thread_B = list_entry(list_max(&s_B->waiters, cmp_priority, NULL), struct thread, elem);
+	
+	return thread_A->priority > thread_B->priority;
+}
+
+
 /* Atomically releases LOCK and waits for COND to be signaled by
    some other piece of code.  After COND is signaled, LOCK is
    reacquired before returning.  LOCK must be held before calling
@@ -282,7 +311,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
+	list_insert_ordered(&cond->waiters, &waiter.elem, cmp_priority_cond, NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -302,9 +331,15 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	if (!list_empty (&cond->waiters))
+	if (!list_empty (&cond->waiters)){
+		/*
+			When waking up, the priority may have changed during the wait
+			---> so sort first. 
+		*/ 
+		list_sort(&cond->waiters, cmp_priority_cond, NULL);
 		sema_up (&list_entry (list_pop_front (&cond->waiters),
 					struct semaphore_elem, elem)->semaphore);
+	}
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by

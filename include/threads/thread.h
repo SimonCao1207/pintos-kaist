@@ -94,6 +94,7 @@ struct thread {
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	int64_t ticks;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -114,6 +115,15 @@ struct thread {
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
 
+struct list sleep_list;
+bool cmp_tick(const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED);
+
+bool cmp_priority(const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED);
+				  				  
 void thread_init (void);
 void thread_start (void);
 

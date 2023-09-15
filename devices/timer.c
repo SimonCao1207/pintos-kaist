@@ -87,14 +87,34 @@ timer_elapsed (int64_t then) {
 	return timer_ticks () - then;
 }
 
+bool cmp_tick(const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED){
+	const struct thread *A = list_entry(a, struct thread, elem);
+	const struct thread *B = list_entry(b, struct thread, elem);
+	return A->ticks < B->ticks;
+}
+
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) {
 	int64_t start = timer_ticks ();
 
 	ASSERT (intr_get_level () == INTR_ON);
+	
+	/* No busy wait
 	while (timer_elapsed (start) < ticks)
 		thread_yield ();
+	*/
+	
+	// Insert the thread to sleep queue
+
+	struct thread *th = thread_current();
+	enum intr_level old_level = intr_disable ();
+	th->ticks = start + ticks;
+	list_insert_ordered(&sleep_list, &th->elem, cmp_tick, NULL);
+	thread_block();
+	intr_set_level (old_level);
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -126,6 +146,20 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
+
+	/*
+	At every tick, check whether some thread 
+	must wake up from sleep queue and wake them up (thread_unblock)
+	*/ 
+	struct thread *th;
+	while (!list_empty(&sleep_list)){
+		th = list_entry(list_front(&sleep_list) , struct thread, elem);
+		if (ticks >= th->ticks){
+			list_pop_front(&sleep_list);
+			thread_unblock(th); // Add to the run queue
+		} else 
+			break;
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

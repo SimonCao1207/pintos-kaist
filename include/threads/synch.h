@@ -1,6 +1,7 @@
 #ifndef THREADS_SYNCH_H
 #define THREADS_SYNCH_H
 
+#include <debug.h>
 #include <list.h>
 #include <stdbool.h>
 
@@ -30,9 +31,12 @@ bool lock_held_by_current_thread (const struct lock *);
 
 /* Condition variable. */
 struct condition {
-	struct list waiters;        /* List of waiting threads. */
+	struct list waiters;        /* List of semaphores waiting to be up. */
 };
-
+bool cmp_priority_cond(const struct list_elem *a,
+                  const struct list_elem *b,
+                  void *aux UNUSED);
+			
 void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
