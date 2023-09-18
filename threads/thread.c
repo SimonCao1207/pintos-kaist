@@ -210,7 +210,7 @@ thread_create (const char *name, int priority,
 	
 	/* Yield the CPU if the newly arriving thread has higher priority*/
 	const struct thread *curr = thread_current();
-	if (t->priority > curr->priority)
+	if (t->donate_priority > curr->donate_priority)
 		thread_yield();
 
 	return tid;
@@ -226,8 +226,7 @@ void
 thread_block (void) {
 	ASSERT (!intr_context ());
 	ASSERT (intr_get_level () == INTR_OFF);
-	thread_current ()->status = THREAD_BLOCKED;
-	schedule ();
+	do_schedule(THREAD_BLOCKED);
 }
 
 bool cmp_priority(const struct list_elem *a,
@@ -235,7 +234,7 @@ bool cmp_priority(const struct list_elem *a,
                   void *aux UNUSED){
 	const struct thread *A = list_entry(a, struct thread, elem);
 	const struct thread *B = list_entry(b, struct thread, elem);
-	return A->priority > B->priority;
+	return A->donate_priority > B->donate_priority;
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -327,13 +326,17 @@ void
 thread_set_priority (int new_priority) {
 	struct thread *curr = thread_current();
 	curr->priority = new_priority;
+	
+	/*Pass priority-change test */
+	if (list_empty(&curr->lock_list))
+		curr->donate_priority = new_priority;
 	thread_yield();
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) {
-	return thread_current ()->priority;
+	return thread_current ()->donate_priority;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -423,7 +426,8 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->status = THREAD_BLOCKED;
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
-	t->priority = priority;
+	t->priority = t->donate_priority = priority;
+	list_init(&t->lock_list);
 	t->magic = THREAD_MAGIC;
 }
 

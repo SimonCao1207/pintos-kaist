@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -90,10 +91,14 @@ struct thread {
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
+	int priority;                       /* Priority (initial) */
 
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem;              /* List element. */
+	struct list_elem elem;              /* Element of ready_list. */	
+	struct list lock_list;				/* List of locks that thread are holding */
+	struct list_elem lock_elem;         /* Element of a list of wating locks*/
+	struct lock *waiting_on_lock;			/* Lock that it waits for */
+	int donate_priority;				/* Priority (after donation)*/
 	int64_t ticks;
 
 #ifdef USERPROG
