@@ -11,6 +11,8 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
+#include "devices/timer.h"
+
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -53,6 +55,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+
+FP load_avg;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -105,12 +109,13 @@ thread_init (void) {
 	};
 	lgdt (&gdt_ds);
 
-	/* Init the globla thread context */
+	/* Init the global thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&sleep_list);
 	list_init (&destruction_req);
-
+	if (thread_mlfqs)
+		load_avg = LOAD_AVG_DEFAULT;
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -134,6 +139,53 @@ thread_start (void) {
 	sema_down (&idle_started);
 }
 
+void calc_priority(struct thread *t){
+	if (t == idle_thread)
+		return;
+	t->priority = PRI_MAX - FP2INT(DIV(t->recent_cpu, FP(4))) - t->nice*2;
+	t->priority = (t->priority > PRI_MAX) ? PRI_MAX : t->priority; 
+	t->priority = (t->priority < PRI_MIN) ? PRI_MIN : t->priority;
+	t->donate_priority = t->priority;
+}
+
+void calc_recent_cpu(struct thread *t){
+	if (t == idle_thread)
+		return;
+	FP decay = DIV(MULL(FP(2), load_avg), MULL(FP(2), load_avg) + FP(1));
+	t->recent_cpu = MULL(decay, t->recent_cpu) + FP(t->nice);
+}
+
+void calc_load_avg(){
+	uint64_t num_ready_threads = list_size(&ready_list) + (thread_current() != idle_thread);
+	load_avg = MULL(DIV(FP(59), FP(60)), load_avg) + MULL(DIV(FP(1), FP(60)), FP(num_ready_threads));
+}
+
+
+void thread_for_each(void (*action)(struct thread * t)){
+	struct list_elem *e; 
+	for (e = list_begin(&ready_list); e != list_end(&ready_list); e = list_next(e)){
+		struct thread * th = list_entry(e, struct thread, elem);
+		action(th);
+	}
+
+	for (e = list_begin(&sleep_list); e != list_end(&sleep_list); e = list_next(e)){
+		struct thread * th = list_entry(e, struct thread, elem);
+		action(th);
+	}
+	if (thread_current()!= idle_thread)
+		action(thread_current());
+
+}
+void recal_priority(){
+	thread_for_each(calc_priority);
+	return;
+}
+
+void recal_recent_cpu(){
+	thread_for_each(calc_recent_cpu);
+	return;
+}
+
 /* Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
 void
@@ -150,6 +202,20 @@ thread_tick (void) {
 	else
 		kernel_ticks++;
 
+	if (thread_mlfqs){
+
+		if (timer_ticks() % TIMER_FREQ == 0){
+			calc_load_avg();
+			recal_recent_cpu();
+		}
+		
+		if (t != idle_thread)
+			t->recent_cpu = t->recent_cpu + FP(1);
+		
+		if (timer_ticks() % 4 == 0){ 
+			recal_priority();
+		}
+	}
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
 		intr_yield_on_return ();
@@ -204,6 +270,12 @@ thread_create (const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
+
+	if (thread_mlfqs){
+		t->nice = thread_current()->nice;
+		t->recent_cpu = thread_current()->recent_cpu;
+		calc_priority(t);
+	}
 
 	/* Add to run queue. */
 	thread_unblock (t);
@@ -324,6 +396,9 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
+	if (thread_mlfqs)
+    	return;
+		
 	struct thread *curr = thread_current();
 	curr->priority = new_priority;
 	
@@ -343,27 +418,29 @@ thread_get_priority (void) {
 void
 thread_set_nice (int nice UNUSED) {
 	/* TODO: Your implementation goes here */
+	thread_current()->nice = nice; 
+	calc_priority(thread_current());
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) {
 	/* TODO: Your implementation goes here */
-	return 0;
+	return thread_current()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) {
 	/* TODO: Your implementation goes here */
-	return 0;
+	return FP2INT(MULL(FP(100), load_avg));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) {
 	/* TODO: Your implementation goes here */
-	return 0;
+	return FP2INT(MULL(FP(100), thread_current()->recent_cpu));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.

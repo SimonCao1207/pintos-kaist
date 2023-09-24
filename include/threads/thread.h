@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "threads/interrupt.h"
 #include "threads/synch.h"
+#include "fixed-point.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -28,6 +29,10 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+#define NICE_DEFAULT 0
+#define RECENT_CPU_DEFAULT 0
+#define LOAD_AVG_DEFAULT 0
 
 /* A kernel thread or user process.
  *
@@ -99,6 +104,8 @@ struct thread {
 	struct list_elem lock_elem;         /* Element of a list of wating locks*/
 	struct lock *waiting_on_lock;			/* Lock that it waits for */
 	int donate_priority;				/* Priority (after donation)*/
+	int nice;
+	FP recent_cpu;
 	int64_t ticks;
 
 #ifdef USERPROG
