@@ -277,6 +277,21 @@ thread_create (const char *name, int priority,
 		calc_priority(t);
 	}
 
+#ifdef USERPROG
+
+	// Allocate FD-Table
+	t->fd_list = (struct list*) malloc(sizeof(struct list));
+
+	if (t->fd_list == NULL)
+		return TID_ERROR;
+
+	// Initialize pointer to FD-table
+	list_init(t->fd_list);
+	
+	t->parent = thread_current();
+	list_push_back(&thread_current()->child_list, &t->child_elem);
+#endif
+
 	/* Add to run queue. */
 	thread_unblock (t);
 	
@@ -505,7 +520,14 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = t->donate_priority = priority;
 	list_init(&t->lock_list);
-	t->magic = THREAD_MAGIC;
+t->magic = THREAD_MAGIC;
+
+#ifdef USERPROG
+	list_init(&t->child_list);
+	sema_init(&t->_do_fork_sema, 0);
+	sema_init(&t->exit_child_sema, 0);
+	sema_init(&t->wait_status_sema, 0);
+#endif
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

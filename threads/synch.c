@@ -123,12 +123,13 @@ sema_up (struct semaphore *sema) {
 		list_sort(&sema->waiters, cmp_priority, NULL);
 		th = list_entry (list_pop_front (&sema->waiters), struct thread, elem);
 		thread_unblock (th);
-	}
-	sema->value++;
-	
-	/* Yield the CPU if the newly arriving thread has higher priority*/
-	if (th && th->donate_priority > thread_current()->donate_priority)
-		thread_yield();
+		sema->value++;
+		/* Yield the CPU if the newly arriving thread has higher priority*/
+		if (!intr_context() && th && th->donate_priority > thread_current()->donate_priority)
+			thread_yield();
+	} else 
+		sema->value ++;
+
 	intr_set_level (old_level);
 }
 
