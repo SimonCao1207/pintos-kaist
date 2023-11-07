@@ -216,6 +216,17 @@ vm_stack_growth (void *addr) {
 	}
 }
 
+void vm_prefault(struct page *page){
+	if (page != NULL && page->frame == NULL)
+		vm_do_claim_page(page);
+}
+
+void *prev_pf_addr = 0; 
+void *next_pf_addr = 0; 
+int num_prefault = 1;
+int step = PGSIZE;
+int dir = 1; 
+
 /* Return true on success */
 bool
 vm_try_handle_fault (struct intr_frame *f, void *addr,
@@ -223,7 +234,8 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
-	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct thread *th = thread_current();
+	struct supplemental_page_table *spt = &th->spt;
 	void *sp;
 
 	if (user && is_kernel_vaddr(addr)){
@@ -231,6 +243,28 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	}
 
 	struct page *page = spt_find_page(spt, addr);
+	int curr_step = (addr - prev_pf_addr); 
+
+	if (next_pf_addr != addr){
+		dir = (addr > prev_pf_addr) ? 1 : -1;
+		step = curr_step*dir;
+	}
+	else
+		num_prefault *= 2;
+
+	void *addr_page_prefault = 0;
+	for (int i=0; i<num_prefault; i++){
+		addr_page_prefault = addr + (i+1)*step*dir;
+		if (user && is_user_vaddr(addr_page_prefault)){
+			struct page *page_next = spt_find_page(spt, addr_page_prefault);
+			vm_prefault(page_next);
+		}
+	}
+
+	if (addr_page_prefault != 0)
+		next_pf_addr = addr_page_prefault + step*dir;
+	prev_pf_addr = addr;
+
 	if (page == NULL) {
 		if (not_present &&
 				addr >= (void *) (f->rsp - 8) &&
@@ -245,8 +279,10 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		if (page->writable == 0 && write) {
 			return false;
 		}
-	
-		return vm_do_claim_page (page);
+		if (page->frame == NULL)
+			return vm_do_claim_page (page);
+		else
+			return true;
 	}
 }
 
