@@ -248,6 +248,7 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 	if (next_pf_addr != addr){
 		dir = (addr > prev_pf_addr) ? 1 : -1;
 		step = curr_step*dir;
+		num_prefault = 1;
 	}
 	else
 		num_prefault *= 2;
@@ -368,6 +369,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 	bool succ = true;
 	struct page_load_info *aux_parent, *aux = NULL;
 
+	// Iterate through each page of parent thread.
 	while (hash_next(&iter) != NULL) {
 		struct page *p = hash_entry(hash_cur(&iter), struct page, spt_elem);
 		enum vm_type p_type = p->operations->type;
@@ -385,6 +387,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 				aux->read_bytes = aux_parent->read_bytes;
 				aux->zero_bytes = aux_parent->zero_bytes;
 
+				// Create the pending page object with initializer at p->va, no frame link with the page --> insert the page with p->va to child's spt.
 				if (!vm_alloc_page_with_initializer(p->page_vm_type, p->va, p->writable, p->uninit.init, aux)) {
 					return false;
 				}
@@ -395,6 +398,10 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 					return false;
 				}
 
+				/*
+					Remove this! 
+					create a new frame for child page --> sets up links between the child page and the frame --> swap in the child page.
+				*/ 
 				if(!vm_claim_page(p->va)) {
 					return false;
 				}
@@ -403,6 +410,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 				lock_acquire(&child_p->lock);
 
 				if (p->frame == NULL) {
+					// create a new frame for parent page --> set up links between parent page and the frame --> swap in the parent page.
 					vm_do_claim_page(p);
 				}
 
