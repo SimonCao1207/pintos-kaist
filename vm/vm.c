@@ -216,6 +216,14 @@ vm_stack_growth (void *addr) {
 	}
 }
 
+bool vm_cow(struct page *page){
+	void *p_kva = page->frame->kva;
+	page->frame->kva = palloc_get_page(PAL_USER);
+	memcpy(page->frame->kva, p_kva, PGSIZE);
+	pml4_set_page(thread_current()->pml4, page->va, page->frame->kva, page->writable);
+	return true;
+}
+
 void vm_prefault(struct page *page){
 	if (page != NULL && page->frame == NULL)
 		vm_do_claim_page(page);
@@ -266,6 +274,10 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		next_pf_addr = addr_page_prefault + step*dir;
 	prev_pf_addr = addr;
 
+	// Write access to r/o page --> do copy on write
+	if (write && !not_present && page->writable && page)
+		return vm_cow(page);
+		
 	if (page == NULL) {
 		if (not_present &&
 				addr >= (void *) (f->rsp - 8) &&
@@ -398,17 +410,20 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 					return false;
 				}
 
-				/*
-					Remove this! 
-					create a new frame for child page --> sets up links between the child page and the frame --> swap in the child page.
-				*/ 
-				if(!vm_claim_page(p->va)) {
-					return false;
-				}
+				struct thread *t = thread_current();
+				struct page *child_p = spt_find_page(&t->spt, p->va);
 
-				struct page *child_p = spt_find_page(&thread_current()->spt, p->va);
+				// Instead: create a new child frame with kva point to same kva of parent's frame (shared physical memory)
+				struct frame *child_frame = malloc(sizeof(struct frame));
+				child_p->frame = child_frame;
+				child_frame->page = child_p;
+				child_frame->kva = p->frame->kva;
+
+				lock_acquire(&victim_list_lock);
+				list_push_back(&victim_list, &child_p->victim_list_elem);
+				lock_release(&victim_list_lock);
+
 				lock_acquire(&child_p->lock);
-
 				if (p->frame == NULL) {
 					// create a new frame for parent page --> set up links between parent page and the frame --> swap in the parent page.
 					vm_do_claim_page(p);
@@ -416,8 +431,16 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 
 				ASSERT (p->frame != NULL);
 				ASSERT (child_p->frame != NULL);
+				
+				// Make it writable 0 when add va->kva mapping in child's pml4
+				if (!pml4_set_page(t->pml4, child_p->va, child_frame->kva, 0))
+					return false;
 
-				memcpy(child_p->va, p->frame->kva, PGSIZE);
+				if (!pml4_set_page(p->owner->pml4, p->va, p->frame->kva, 0))
+					return false;
+
+				swap_in(child_p, child_frame->kva);
+
 				lock_release(&child_p->lock);
 				break;
 			case VM_FILE:
