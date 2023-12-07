@@ -353,9 +353,7 @@ process_cleanup (void) {
 
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
-	return;
-#endif
-
+#else
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back
 	 * to the kernel-only page directory. */
@@ -372,6 +370,7 @@ process_cleanup (void) {
 		pml4_activate (NULL);
 		pml4_destroy (pml4);
 	}
+#endif
 }
 
 /* Sets up the CPU for running user code in the nest thread.
